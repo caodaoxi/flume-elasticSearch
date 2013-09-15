@@ -3,8 +3,12 @@ package com.cn.flume;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Map;
 
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.Client;
@@ -12,6 +16,7 @@ import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import com.cloudera.flume.conf.Context;
 import com.cloudera.flume.conf.SinkFactory.SinkBuilder;
@@ -25,7 +30,9 @@ public class ElasticSearchSink extends EventSink.Base {
 	private String dataType = null;
 	private String host = "localhost";
 	private String delimiter = "\t";
+	private Charset charset = Charset.defaultCharset();
 	private int port = 9300;
+	private SimpleDateFormat df = new SimpleDateFormat("yyyy.MM.dd");
 	private Client client = null;
 	public ElasticSearchSink(String clusterName, String indexName, String dataType, String host, int port, String delimiter) {
 		this.clusterName = clusterName;
@@ -46,18 +53,24 @@ public class ElasticSearchSink extends EventSink.Base {
 	@Override
 	public void append(Event e) throws IOException {
 		String message = new String(e.getBody());
-		IndexResponse response = client.prepareIndex(this.indexName, this.dataType, "1")
-		        .setSource(jsonBuilder()
-		                    .startObject()
-		                        .field("host", e.getHost())
-		                        .field("timestamp", e.getTimestamp())
-		                        .field("message", message)
-		                        .field("type", this.dataType)
-		                    .endObject()
-		                  )
-		        .execute()
-		        .actionGet();
-		//String[] fields = message.split(this.delimiter);
+		XContentBuilder builder = jsonBuilder();
+		
+		builder.startObject().field("@message", message);
+		builder.field("@timestamp", new Date(e.getTimestamp()));
+		builder.field("@source", "file://" + this.host + "/var/log/pv.log");
+		builder.field("@source_host", e.getHost());
+		builder.field("@src_path", "/var/log/pv.log");
+		builder.field("@type", this.dataType);
+		builder.startObject("@fields");
+        for (Map.Entry<String, byte[]> entry : e.getAttrs().entrySet()) {
+        	builder.field(entry.getKey(), new String(entry.getValue(), charset));
+        }
+        builder.endObject();
+        builder.startArray("@tags");
+        builder.endArray();
+        builder.endObject();
+		IndexResponse response = client.prepareIndex(this.indexName + "-" + df.format(new Date()), this.dataType)
+		        .setSource(builder).execute().actionGet();
 	}
 
 	@Override
